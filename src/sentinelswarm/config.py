@@ -105,6 +105,14 @@ class Settings(BaseSettings):
     base_y: float = 0.0
     base_z: float = 0.0
 
+    # High-rate pose/altitude sampling + live telemetry stream rate (Hz).
+    telemetry_hz: float = Field(
+        default=30.0, description="Pose/altitude sample & live-stream rate (Hz)."
+    )
+    sensor_radius_m: float = Field(
+        default=35.0, description="Ground sensing footprint radius used for coverage mapping."
+    )
+
     battery: BatterySettings = Field(default_factory=BatterySettings)
     health: HealthSettings = Field(default_factory=HealthSettings)
     mission: MissionSettings = Field(default_factory=MissionSettings)

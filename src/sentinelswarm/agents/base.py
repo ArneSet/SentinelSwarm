@@ -91,6 +91,7 @@ class AgentConfig:
     """Tunables for the vehicle-side behaviour."""
 
     heartbeat_interval_s: float = 1.0
+    telemetry_hz: float = 30.0
     cruise_speed_mps: float = 12.0
     takeoff_altitude_m: float = 15.0
     patrol_duration_s: float = 5.0
@@ -102,6 +103,7 @@ class AgentConfig:
     def from_settings(cls, settings: Settings) -> AgentConfig:
         return cls(
             heartbeat_interval_s=settings.health.heartbeat_interval_s,
+            telemetry_hz=settings.telemetry_hz,
             battery_critical_pct=settings.battery.critical_pct,
             battery_full_pct=settings.battery.full_pct,
         )
@@ -142,6 +144,7 @@ class DroneAgent:
         self._alive = True  # False after comms loss => publishes nothing
         self._running = False
         self._last_t = 0.0
+        self._last_heartbeat_at = 0.0
 
     # -- lifecycle -------------------------------------------------------
     async def run(self) -> None:
@@ -150,21 +153,28 @@ class DroneAgent:
         await self.driver.connect()
         self.bus.subscribe(command_subject(self.drone_id), self._on_command)
         self._last_t = self.clock.now()
+        self._last_heartbeat_at = self._last_t
         self._transition(DroneState.IDLE)
         self._emit_registration()
+        self._emit_heartbeat(self._last_t)
         self._running = True
+        tick = 1.0 / max(1.0, self.cfg.telemetry_hz)
         while self._running:
             now = self.clock.now()
             dt = now - self._last_t
             if dt <= 0:
-                dt = self.cfg.heartbeat_interval_s
+                dt = tick
             self._last_t = now
             await self.driver.step(dt)
             self._handle_fault()
             if self._alive:
                 await self._advance(now)
+                # High-rate pose/altitude telemetry for a smooth operator picture.
                 self._publish_telemetry(now)
-            await self.clock.sleep(self.cfg.heartbeat_interval_s)
+                if now - self._last_heartbeat_at >= self.cfg.heartbeat_interval_s:
+                    self._last_heartbeat_at = now
+                    self._emit_heartbeat(now)
+            await self.clock.sleep(tick)
 
     def stop(self) -> None:
         self._running = False
@@ -420,14 +430,16 @@ class DroneAgent:
             correlation_id=self._mission.correlation_id,
         )
 
-    def _publish_telemetry(self, now: float) -> None:
-        pos = self.driver.position
+    def _emit_heartbeat(self, now: float) -> None:
         self._emit(
             uplink_event_subject(self.drone_id),
             Heartbeat(
                 drone_id=self.drone_id, battery_pct=self.driver.battery_pct, state=self.state
             ),
         )
+
+    def _publish_telemetry(self, now: float) -> None:
+        pos = self.driver.position
         self._emit(
             telemetry_subject(self.drone_id),
             Telemetry(

@@ -10,6 +10,14 @@ divide patrol zones between themselves, stream telemetry, monitor their own heal
 recover from failures, and return to base to recharge — all orchestrated by a typed,
 observable control plane.
 
+The control plane now runs two deliberately separate worlds:
+
+- **SIM** — an in-process simulation fleet for rapid iteration, demos and CI.
+- **REAL** — an isolated hardware world for future ESP32/PX4/ROS 2 uplinks.
+
+The dashboard switches the whole application between those worlds. A simulated drone's
+coverage map, incidents and missions never leak into the real world.
+
 The whole system runs **in simulation** with no physical hardware, but the seams are
 deliberately drawn so that **any real drone can plug into the exact same control
 plane** as the simulated ones — whether that's my own ESP32 mini-drone builds or a
@@ -75,6 +83,9 @@ localised change, not a rewrite.
 | Failure handling & mission reassignment | [`fleet/manager.py`](src/sentinelswarm/fleet/manager.py) |
 | Battery-aware scheduling & return-to-base | [`fleet/scheduler.py`](src/sentinelswarm/fleet/scheduler.py), [`agents/base.py`](src/sentinelswarm/agents/base.py) |
 | Edge/vehicle agents + sim/real driver seam | [`agents/`](src/sentinelswarm/agents) |
+| Isolated SIM/REAL worlds | [`api/app.py`](src/sentinelswarm/api/app.py) |
+| 30 Hz telemetry streaming | [`agents/base.py`](src/sentinelswarm/agents/base.py), [`api/app.py`](src/sentinelswarm/api/app.py) |
+| Zoomable 2D map + interactive 3D reconstruction | [`api/static/app.js`](src/sentinelswarm/api/static/app.js), [`api/static/app.css`](src/sentinelswarm/api/static/app.css) |
 | Observability (logs, metrics, correlation ids) | [`observability/`](src/sentinelswarm/observability) |
 | Typed control-plane API + dashboard | [`api/`](src/sentinelswarm/api) |
 | Deterministic end-to-end simulation | [`sim/`](src/sentinelswarm/sim) |
@@ -93,21 +104,28 @@ else.
 ```mermaid
 flowchart TD
     OP["Operator / Dashboard"] -->|REST| API["Fleet Management API<br/>(FastAPI)"]
-    API --> MGR["Fleet Manager<br/>· scheduler loop<br/>· health monitor loop<br/>· failure handling"]
-    MGR <-->|typed events| BUS["Message Bus<br/>(subjects + wildcards)<br/>InMemory today · NATS/MQTT later"]
-    BUS <--> AG["Drone Agents<br/>(mission execution +<br/>vehicle state machine)"]
-    AG --> DRV["DroneDriver seam"]
-    DRV --> SIM["SimulatedDriver<br/>(kinematics + battery)"]
-    DRV -.future.-> REAL["Ros2Px4Driver<br/>(MAVSDK / PX4 / Gazebo)"]
-    MGR --> STORE[("Fleet state · missions · incidents<br/>in-memory today · PostgreSQL later")]
-    MGR --> OBS["Metrics /metrics · structured logs · correlation ids"]
+  OP <-->|30 Hz WebSocket| API
+  API --> SIMWORLD["SIM world<br/>FleetOrchestrator"]
+  API --> REALWORLD["REAL world<br/>FleetOrchestrator"]
+
+  SIMWORLD --> SIMMGR["SIM Fleet Manager"]
+  SIMMGR <-->|typed events| SIMBUS["SIM MessageBus"]
+  SIMBUS <--> SIMAG["Simulated drone agents"]
+
+  REALWORLD --> REALMGR["REAL Fleet Manager"]
+  REALMGR <-->|typed events| REALBUS["REAL bus adapter later"]
+  REALBUS <--> REALAG["ESP32 / PX4 / ROS 2 agents"]
+
+  SIMMGR --> SIMSTORE[("SIM missions / incidents / coverage")]
+  REALMGR --> REALSTORE[("REAL missions / incidents / coverage")]
+  SIMMGR --> OBS["Metrics / logs / correlation ids"]
+  REALMGR --> OBS
 ```
 
 **Data flow.** Drone agents publish `uplink.telemetry.<id>` and `uplink.event.<id>`
-(registration, heartbeats, mission lifecycle, faults). The fleet manager subscribes with
-wildcards, updates the authoritative fleet state, and issues `command.<id>` messages
-(assign / abort / return-to-base). Because the manager only ever sees **bus events**, it
-cannot distinguish a simulated drone from a real one.
+(registration, heartbeats, mission lifecycle, faults). Each world has its own manager,
+message bus and state store. The dashboard subscribes to `/ws/sim` or `/ws/real` and keeps
+map coverage isolated per world.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component responsibilities, the event
 model, and the API model.
@@ -121,7 +139,10 @@ model, and the API model.
 | Language | **Python 3.11+** | Matches ROS 2 `rclpy`, OpenCV, fast iteration, strong typing |
 | API | **FastAPI + Uvicorn + Pydantic v2** | Typed, async, auto OpenAPI docs |
 | Messaging | **Subject-based bus** (in-memory; NATS/MQTT-ready) | Runs with zero infra; clean seam to a real broker |
+| Live stream | **WebSocket at 30 Hz** | Smooth operator picture without REST polling |
 | Simulation | **Custom kinematic + battery model** | Deterministic, dependency-free, CI-friendly; PX4/Gazebo behind the driver seam |
+| Dashboard | **Buildless ESM + Canvas + Three.js** | Multi-page command SPA, pan/zoom 2D map and interactive 3D terrain without a Node build |
+| UI assets | Vendored Three.js, OrbitControls, Space Grotesk, IBM Plex Mono | Self-contained runtime assets packaged in the wheel |
 | Persistence | In-memory repositories (PostgreSQL-ready interface) | Simulation-first & deterministic tests |
 | Observability | **Prometheus** metrics, structured **JSON logs**, correlation ids | Production-style telemetry |
 | Testing | **pytest + pytest-asyncio**, deterministic virtual clock | Reproducible unit + e2e tests |
@@ -224,11 +245,31 @@ uvicorn sentinelswarm.api.app:app --reload
 
 Then open:
 
-- **Dashboard:** http://localhost:8000/dashboard — fleet cards, drone table, mission queue,
-  incident feed, and a live ENU map. Buttons let you add drones, create patrol missions,
-  and inject a comms-loss fault to watch reassignment happen live.
+- **Dashboard:** http://localhost:8000/dashboard — a multi-page command console with
+  Overview, Tactical Map, 3D Terrain, Units, Missions and Incidents pages.
+- **SIM / REAL switch:** the large top-left switch changes the entire application context.
+  SIM and REAL have separate mission queues, incidents, map coverage and live streams.
+- **Tactical Map:** wheel zoom, drag pan, infinite sparse coverage grid, mapped area in
+  `m²`, range rings, patrol zones, trails and altitude-aware drone markers.
+- **3D Terrain:** interactive Three.js reconstruction of the current world's coverage map.
+  Drag to orbit, wheel to zoom, right-drag to pan.
 - **API docs (OpenAPI):** http://localhost:8000/docs
 - **Metrics:** http://localhost:8000/metrics
+
+World-specific endpoints are namespaced:
+
+```bash
+curl localhost:8000/api/worlds
+curl localhost:8000/api/sim/fleet
+curl localhost:8000/api/real/fleet
+curl -X POST localhost:8000/api/sim/missions \
+  -H 'content-type: application/json' \
+  -d '{"type":"PATROL_ZONE","x":120,"y":0,"radius":20}'
+curl -X POST localhost:8000/api/sim/drones/sim-2/fault \
+  -H 'content-type: application/json' -d '{"code":"comms_loss"}'
+```
+
+Live streams are `ws://localhost:8000/ws/sim` and `ws://localhost:8000/ws/real`.
 
 Or bring up the full stack (API + Prometheus + Grafana) with Docker:
 
@@ -261,7 +302,9 @@ orchestrator.add_drone(Ros2Px4Driver("uav-01", connection_url="udp://:14540"))
 `Ros2Px4Driver` is a documented stub ([agents/ros2_px4.py](src/sentinelswarm/agents/ros2_px4.py))
 showing exactly which methods a real integration implements — the control plane needs **no**
 changes regardless of what's on the other end of that interface. Over the API,
-`POST /api/drones` adds a simulated drone and `DELETE /api/drones/{id}` retires one.
+`POST /api/sim/drones` adds a simulated drone to the SIM world and
+`DELETE /api/sim/drones/{id}` retires one. REAL hardware will attach under the REAL world
+without inheriting SIM missions, coverage or incidents.
 
 ---
 
@@ -284,6 +327,7 @@ Coverage of meaningful behaviours:
 - **Idempotency / ordering** — duplicate & non-owner events ignored ([test_idempotency.py](tests/test_idempotency.py))
 - **Messaging** — subject routing, wildcards, isolation ([test_bus.py](tests/test_bus.py))
 - **API** — validation (422), 404s, CRUD, metrics ([test_api.py](tests/test_api.py))
+- **World separation** — SIM missions/state remain invisible to REAL ([test_api.py](tests/test_api.py))
 - **End-to-end** — the full documented scenario ([test_e2e_simulation.py](tests/test_e2e_simulation.py))
 
 ---
@@ -325,6 +369,7 @@ src/sentinelswarm/
   fleet/          manager, scheduler, incidents, in-memory state store
   observability/  structured logging + Prometheus metrics
   api/            FastAPI app, schemas, packaged dashboard (static/)
+  api/static/     buildless command SPA, CSS, JS, vendored Three.js/fonts
   sim/            orchestrator, demo scenario, CLI runner
 tests/            unit, integration and end-to-end tests
 docs/             architecture & design documentation
@@ -341,6 +386,7 @@ deploy/           prometheus + grafana provisioning
 - [docs/NETWORKING.md](docs/NETWORKING.md) — heartbeats, retries, idempotency, ordering
 - [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — logs, metrics, traces
 - [docs/DEMO.md](docs/DEMO.md) — running the demo & what to look for
+- [docs/HANDOVER.md](docs/HANDOVER.md) — current state and next steps for continuing in another tool
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup & conventions
 
 ---
@@ -348,6 +394,7 @@ deploy/           prometheus + grafana provisioning
 ## Roadmap
 
 - [ ] `Ros2Px4Driver` backed by PX4 SITL + Gazebo (behind the existing seam)
+- [ ] ESP32 hardware uplink driver (Wi-Fi/MQTT or serial bridge) for the REAL world
 - [ ] NATS/MQTT bus adapter (drop-in for `InMemoryBus`)
 - [ ] PostgreSQL-backed fleet/mission/incident repositories
 - [ ] OpenTelemetry traces + Grafana dashboards committed to `deploy/`

@@ -7,6 +7,8 @@ responsibilities, technology decisions, the event model and the API model.
 
 - **Simulation-first**: everything runs without hardware and in CI.
 - **Real-drone-ready**: simulated and real vehicles share one control plane.
+- **World isolation**: simulated and real fleets run as separate orchestrators with separate
+  buses, state, incidents and map coverage. SIM discoveries do not enter the REAL map.
 - **Thin edge, smart control plane**: the vehicles themselves are kept minimal (they report
   telemetry and follow setpoints); fleet-level decisions live entirely in SentinelSwarm.
 - **Deterministic**: control logic is reproducible (virtual clock, pure scheduler).
@@ -22,33 +24,43 @@ flowchart TD
       OTOOLS["curl / OpenAPI /docs"]
     end
     subgraph ControlPlane["Control plane (Python)"]
-      API["FastAPI app<br/>api/"]
-      MGR["FleetManager<br/>fleet/manager.py"]
-      SCH["FleetScheduler<br/>fleet/scheduler.py"]
-      STATE["FleetState + IncidentLog<br/>fleet/state.py"]
+      API["FastAPI app<br/>api/app.py"]
+      SIMWORLD["SIM FleetOrchestrator"]
+      REALWORLD["REAL FleetOrchestrator"]
       OBS["Metrics + logging<br/>observability/"]
     end
-    subgraph Transport
-      BUS["MessageBus<br/>messaging/"]
+    subgraph SimWorld["Simulation world"]
+      SIMMGR["FleetManager"]
+      SIMBUS["MessageBus"]
+      SIMSTATE["FleetState + IncidentLog"]
+      SIMAG["DroneAgents"]
+      SIMDRV["SimulatedDriver"]
     end
-    subgraph Edge["Edge / vehicle"]
-      AG["DroneAgent<br/>agents/base.py"]
-      DRV["DroneDriver"]
-      SIM["SimulatedDriver"]
-      REAL["Ros2Px4Driver (stub)"]
+    subgraph RealWorld["Real hardware world"]
+      REALMGR["FleetManager"]
+      REALBUS["Bus adapter later"]
+      REALSTATE["FleetState + IncidentLog"]
+      REALAG["DroneAgents"]
+      REALDRV["ESP32 / PX4 / ROS 2 driver seam"]
     end
 
-    DASH --> API
+    DASH -->|REST /api/{world}| API
+    DASH <-->|WebSocket /ws/{world}| API
     OTOOLS --> API
-    API --> MGR
-    MGR --> SCH
-    MGR --> STATE
-    MGR --> OBS
-    MGR <--> BUS
-    BUS <--> AG
-    AG --> DRV
-    DRV --> SIM
-    DRV -.future.-> REAL
+    API --> SIMWORLD
+    API --> REALWORLD
+    SIMWORLD --> SIMMGR
+    REALWORLD --> REALMGR
+    SIMMGR --> SIMSTATE
+    REALMGR --> REALSTATE
+    SIMMGR <--> SIMBUS
+    REALMGR <--> REALBUS
+    SIMBUS <--> SIMAG
+    REALBUS <--> REALAG
+    SIMAG --> SIMDRV
+    REALAG --> REALDRV
+    SIMMGR --> OBS
+    REALMGR --> OBS
 ```
 
 ## 3. Component responsibilities
@@ -60,7 +72,8 @@ flowchart TD
 | **Agents** | `agents/` | `DroneAgent` runs mission execution + the vehicle-side state machine; `DroneDriver` is the sim/real seam; `SimulatedDriver` integrates kinematics + battery. |
 | **Fleet** | `fleet/` | `FleetManager` ingests telemetry, monitors health, schedules, handles failures & reassignment; `FleetScheduler` is a pure matcher; `FleetState` is the in-memory store; `IncidentLog` is the audit trail. |
 | **Observability** | `observability/` | Structured JSON logging with correlation ids; Prometheus metrics with an injectable registry. |
-| **API** | `api/` | FastAPI routes, Pydantic schemas, packaged dashboard. |
+| **API** | `api/` | FastAPI routes, Pydantic schemas, world-scoped REST routes, `/ws/{env}` streaming, packaged dashboard. |
+| **Dashboard** | `api/static/` | Buildless ESM SPA with world switch, sub-pages, canvas tactical map, Three.js 3D terrain and vendored assets. |
 | **Sim** | `sim/` | `FleetOrchestrator` wires everything and supports runtime add/remove of drones; demo scenario; CLI runner with deterministic virtual time. |
 
 ## 4. Technology decisions
@@ -69,6 +82,13 @@ flowchart TD
   keeps the codebase in one language. C++ is reserved for future performance-critical ROS 2
   nodes (documented, not built).
 - **FastAPI + Pydantic v2** — typed request/response models, async, free OpenAPI docs.
+- **Two orchestrators in one API process** — `/api/sim/*` and `/api/real/*` are backed by
+  independent `FleetOrchestrator` instances. This keeps simulated training/demo data away
+  from the future real-hardware map.
+- **30 Hz WebSocket telemetry** — `DroneAgent` publishes high-rate pose telemetry while
+  heartbeats stay at a lower liveness cadence. The dashboard renders with interpolation.
+- **Buildless dashboard** — HTML/CSS/ESM only; Three.js, OrbitControls and fonts are
+  vendored under `api/static/vendor/` and packaged in the wheel.
 - **In-memory subject bus** instead of a broker dependency — the demo runs with zero infra,
   yet `MessageBus` mirrors NATS semantics (subjects + `*`/`>` wildcards, at-least-once
   handler execution), so a NATS/MQTT adapter is a drop-in.
@@ -107,14 +127,16 @@ Base URL `/`. Full schema at `/docs` (OpenAPI). Summary:
 | --- | --- |
 | `GET /health` | Liveness |
 | `GET /metrics` | Prometheus metrics |
-| `GET /api/fleet` | Fleet summary (counts, success rate, battery, incidents) |
-| `GET /api/drones` · `GET /api/drones/{id}` | List / get drone twins |
-| `POST /api/drones` · `DELETE /api/drones/{id}` | Add / retire a simulated drone at runtime |
-| `POST /api/drones/{id}/fault` | Inject a fault (demo) |
-| `GET /api/missions` · `GET /api/missions/{id}` | List / get missions |
-| `POST /api/missions` | Create a mission (patrol/inspection) |
-| `POST /api/missions/{id}/cancel` | Cancel a mission |
-| `GET /api/incidents` | Incident audit trail |
+| `GET /api/worlds` | Summary of the SIM and REAL worlds |
+| `GET /api/{env}/fleet` | World-scoped fleet summary (`env = sim | real`) |
+| `GET /api/{env}/drones` · `GET /api/{env}/drones/{id}` | List / get drone twins for one world |
+| `POST /api/{env}/drones` · `DELETE /api/{env}/drones/{id}` | Add / retire a drone in one world |
+| `POST /api/{env}/drones/{id}/fault` | Inject a fault in one world (demo) |
+| `GET /api/{env}/missions` · `GET /api/{env}/missions/{id}` | List / get missions in one world |
+| `POST /api/{env}/missions` | Create a mission in one world |
+| `POST /api/{env}/missions/{id}/cancel` | Cancel a world-scoped mission |
+| `GET /api/{env}/incidents` | Incident audit trail for one world |
+| `WS /ws/{env}` | 30 Hz world-scoped telemetry stream |
 | `GET /dashboard` | Operator dashboard (static) |
 
 ## 7. Extension points (the seams that matter)

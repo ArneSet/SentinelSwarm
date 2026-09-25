@@ -64,7 +64,15 @@ spans keyed by `correlation_id`).
 
 ## Dashboard & stack
 
-- **Dashboard**: `GET /dashboard` renders fleet cards, drone/mission tables, an incident feed
-  and a live ENU map.
+- **Dashboard**: `GET /dashboard` renders a buildless multi-page command console. It uses
+  30 Hz WebSocket snapshots from `WS /ws/sim` or `WS /ws/real`, interpolates motion in the
+  browser, and keeps SIM/REAL coverage maps separate.
+- **2D map telemetry**: the tactical map renders an unbounded sparse coverage grid, mapped
+  area in `m²`, range rings, patrol zones, trails and altitude-aware drone markers.
+- **3D telemetry**: the terrain page uses vendored Three.js + OrbitControls to reconstruct
+  the active world's coverage as interactive extruded terrain.
 - **Local stack**: `docker compose up` starts the API, Prometheus (scraping `/metrics`) and
   Grafana (Prometheus datasource pre-provisioned in `deploy/`).
+
+The Prometheus registry currently represents the default SIM stack. A production deployment
+should either label metrics by world (`sim` / `real`) or expose separate registries per world.

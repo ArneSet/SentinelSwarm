@@ -1,204 +1,79 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SentinelSwarm — Fleet Console</title>
-    <style>
-      :root {
-        --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #c9d1d9;
-        --muted: #8b949e; --accent: #58a6ff; --ok: #3fb950; --warn: #d29922;
-        --bad: #f85149; --idle: #6e7681;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0; font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
-        background: var(--bg); color: var(--text);
-      }
-      header {
-        padding: 12px 20px; border-bottom: 1px solid var(--border);
-        display: flex; align-items: center; gap: 16px;
-      }
-      header h1 { font-size: 16px; margin: 0; color: var(--accent); }
-      header .badge {
-        font-size: 11px; color: var(--muted); border: 1px solid var(--border);
-        padding: 2px 8px; border-radius: 10px;
-      }
-      main { display: grid; grid-template-columns: 360px 1fr; gap: 16px; padding: 16px; }
-      .panel {
-        background: var(--panel); border: 1px solid var(--border);
-        border-radius: 8px; padding: 14px; margin-bottom: 16px;
-      }
-      .panel h2 { font-size: 12px; text-transform: uppercase; color: var(--muted);
-        margin: 0 0 10px; letter-spacing: 1px; }
-      .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-      .card { background: #0d1117; border: 1px solid var(--border); border-radius: 6px;
-        padding: 10px; text-align: center; }
-      .card .n { font-size: 22px; font-weight: 700; }
-      .card .l { font-size: 10px; color: var(--muted); text-transform: uppercase; }
-      table { width: 100%; border-collapse: collapse; font-size: 12px; }
-      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-      th { color: var(--muted); font-weight: 500; }
-      .pill { padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; }
-      .s-IDLE, .s-CHARGING { background: #21262d; color: var(--idle); }
-      .s-ASSIGNED, .s-TAKEOFF, .s-TRANSIT, .s-PATROLLING, .s-RETURNING {
-        background: rgba(88,166,255,.15); color: var(--accent); }
-      .s-OFFLINE, .s-FAULT { background: rgba(248,81,73,.15); color: var(--bad); }
-      .s-RECOVERING { background: rgba(210,153,34,.15); color: var(--warn); }
-      .bar { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
-      .bar > span { display: block; height: 100%; background: var(--ok); }
-      button {
-        background: #21262d; color: var(--text); border: 1px solid var(--border);
-        border-radius: 6px; padding: 5px 10px; cursor: pointer; font: inherit; font-size: 11px;
-      }
-      button:hover { border-color: var(--accent); }
-      button.danger:hover { border-color: var(--bad); color: var(--bad); }
-      .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-      svg { width: 100%; height: 460px; background: #0d1117; border-radius: 6px; }
-      .muted { color: var(--muted); }
-      .incident { font-size: 11px; padding: 6px 0; border-bottom: 1px solid var(--border); }
-      .incident .cat { color: var(--bad); font-weight: 700; }
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>SentinelSwarm</h1>
-      <span class="badge">non-weaponized · simulation-first</span>
-      <span class="badge" id="clock">t = —</span>
-      <span class="muted" style="margin-left:auto" id="status">connecting…</span>
-    </header>
-
-    <main>
-      <section>
-        <div class="panel">
-          <h2>Fleet</h2>
-          <div class="cards" id="cards"></div>
-        </div>
-        <div class="panel">
-          <h2>Controls</h2>
-          <div class="controls">
-            <button onclick="addDrone()">+ Add sim drone</button>
-            <button onclick="newMission()">+ Patrol mission</button>
-          </div>
-          <div class="muted" style="font-size:11px">
-            Click a drone's <b>fault</b> button to simulate comms loss and watch the
-            fleet detect it and reassign the mission.
-          </div>
-        </div>
-        <div class="panel">
-          <h2>Incidents</h2>
-          <div id="incidents"><div class="muted">none</div></div>
-        </div>
-      </section>
-
-      <section>
-        <div class="panel">
-          <h2>Map (ENU, base at centre)</h2>
-          <svg id="map" viewBox="-160 -160 320 320" preserveAspectRatio="xMidYMid meet"></svg>
-        </div>
-        <div class="panel">
-          <h2>Drones</h2>
-          <table>
-            <thead><tr><th>ID</th><th>Kind</th><th>State</th><th>Battery</th>
-              <th>Health</th><th>Mission</th><th></th></tr></thead>
-            <tbody id="drones"></tbody>
-          </table>
-        </div>
-        <div class="panel">
-          <h2>Missions</h2>
-          <table>
-            <thead><tr><th>ID</th><th>Type</th><th>Status</th>
-              <th>Drone</th><th>Attempts</th></tr></thead>
-            <tbody id="missions"></tbody>
-          </table>
-        </div>
-      </section>
-    </main>
-
-    <script>
-      const api = (p, opts) => fetch(p, opts).then((r) => r.json());
-
-      async function addDrone() {
-        await fetch("/api/drones", { method: "POST",
-          headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-      }
-      async function newMission() {
-        const ang = Math.random() * Math.PI * 2, r = 120;
-        await fetch("/api/missions", { method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "PATROL_ZONE",
-            x: Math.round(r * Math.cos(ang)), y: Math.round(r * Math.sin(ang)), radius: 20 }) });
-      }
-      async function faultDrone(id) {
-        await fetch(`/api/drones/${id}/fault`, { method: "POST",
-          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: "comms_loss" }) });
-      }
-
-      function card(n, l) { return `<div class="card"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
-
-      function renderMap(drones, missions) {
-        const svg = document.getElementById("map");
-        let s = `<circle cx="0" cy="0" r="4" fill="#58a6ff" />
-          <text x="6" y="4" fill="#8b949e" font-size="7">BASE</text>`;
-        for (const m of missions) {
-          if (m.target_x == null) continue;
-          const col = m.status === "COMPLETED" ? "#3fb950" : "#8b949e";
-          s += `<circle cx="${m.target_x}" cy="${-m.target_y}" r="20"
-            fill="none" stroke="${col}" stroke-dasharray="3 3" opacity="0.6" />`;
-        }
-        const colors = { OFFLINE: "#f85149", FAULT: "#f85149", IDLE: "#6e7681",
-          CHARGING: "#6e7681" };
-        for (const d of drones) {
-          const c = colors[d.state] || "#58a6ff";
-          s += `<circle cx="${d.x}" cy="${-d.y}" r="4" fill="${c}" />
-            <text x="${d.x + 5}" y="${-d.y + 3}" fill="#c9d1d9" font-size="7">${d.drone_id}</text>`;
-        }
-        svg.innerHTML = s;
-      }
-
-      async function tick() {
-        try {
-          const [summary, drones, missions, incidents] =
-            await Promise.all([api("/api/fleet"), api("/api/drones"),
-              api("/api/missions"), api("/api/incidents")]);
-          document.getElementById("status").textContent = "live";
-          const rate = summary.mission_success_rate;
-          document.getElementById("cards").innerHTML =
-            card(summary.fleet_size, "drones") + card(summary.healthy, "healthy") +
-            card(summary.offline, "offline") + card(summary.active_missions, "active") +
-            card(summary.incident_count, "incidents") +
-            card(rate == null ? "—" : Math.round(rate * 100) + "%", "success");
-
-          document.getElementById("drones").innerHTML = drones.map((d) => `
-            <tr>
-              <td>${d.drone_id}</td><td class="muted">${d.kind}</td>
-              <td><span class="pill s-${d.state}">${d.state}</span></td>
-              <td style="min-width:70px"><div class="bar"><span style="width:${d.battery_pct}%"></span></div></td>
-              <td class="muted">${d.health}</td>
-              <td class="muted">${d.current_mission_id || "—"}</td>
-              <td><button class="danger" onclick="faultDrone('${d.drone_id}')">fault</button></td>
-            </tr>`).join("");
-
-          document.getElementById("missions").innerHTML = missions.map((m) => `
-            <tr>
-              <td>${m.mission_id}</td><td class="muted">${m.type}</td>
-              <td><span class="pill s-${m.status === 'COMPLETED' ? 'IDLE' : 'TRANSIT'}">${m.status}</span></td>
-              <td class="muted">${m.assigned_drone || "—"}</td>
-              <td>${m.attempts}</td>
-            </tr>`).join("") || `<tr><td colspan="5" class="muted">no missions</td></tr>`;
-
-          document.getElementById("incidents").innerHTML = incidents.slice().reverse().map((i) => `
-            <div class="incident"><span class="cat">${i.category}</span>
-              &nbsp;${i.drone_id || ""} ${i.mission_id || ""}<br/>
-              <span class="muted">${i.detail}</span></div>`).join("") || `<div class="muted">none</div>`;
-
-          renderMap(drones, missions);
-        } catch (e) {
-          document.getElementById("status").textContent = "disconnected";
+    <title>SENTINELSWARM · Command</title>
+    <link rel="stylesheet" href="/dashboard/app.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/dashboard/vendor/three.module.js",
+          "three/addons/controls/OrbitControls.js": "/dashboard/vendor/OrbitControls.js"
         }
       }
-      setInterval(tick, 1000);
-      tick();
     </script>
+  </head>
+  <body data-world="sim">
+    <div id="app">
+      <header id="topbar">
+        <div class="world-switch" id="worldSwitch">
+          <button data-w="sim" class="on"><span class="led"></span>SIM</button>
+          <button data-w="real"><span class="led"></span>REAL</button>
+        </div>
+        <div class="brand">
+          <div class="n">SENTINEL<b>SWARM</b></div>
+          <div class="s">Fleet Command</div>
+        </div>
+        <div class="sp"></div>
+        <span class="classif" id="classif">UNCLASSIFIED // SIMULATION</span>
+        <div class="tstat"><span>UNITS</span><b id="tUnits">0</b></div>
+        <div class="tstat"><span>STREAM</span><b id="tRate">— Hz</b></div>
+        <div class="tstat"><span class="led off" id="tLed"></span><b id="tConn">OFFLINE</b></div>
+        <div class="tstat"><span>MET</span><b id="tClock">00:00:00</b></div>
+      </header>
+
+      <div id="body">
+        <nav id="rail">
+          <div class="nav" id="nav">
+            <a href="#/overview" data-r="overview">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+              Overview
+            </a>
+            <a href="#/map" data-r="map">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+              Tactical Map
+            </a>
+            <a href="#/terrain" data-r="terrain">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 17l6-9 4 5 3-4 5 8z"/><path d="M3 20h18"/></svg>
+              3D Terrain
+            </a>
+            <div class="grouplabel">Fleet</div>
+            <a href="#/fleet" data-r="fleet">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3 6 6 .5-4.5 4 1.5 6L12 15l-6 3.5 1.5-6L3 8.5 9 8z"/></svg>
+              Units
+            </a>
+            <a href="#/missions" data-r="missions">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+              Missions
+            </a>
+            <a href="#/incidents" data-r="incidents">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+              Incidents
+            </a>
+          </div>
+          <div class="rail-foot">
+            <div class="worldcard">
+              <div class="wl">Active World</div>
+              <div class="wv" id="wcName">SIMULATION</div>
+              <div class="wm" id="wcMeta">0 units · 0 active</div>
+              <div class="wm" id="wcArea">0 m² mapped</div>
+            </div>
+          </div>
+        </nav>
+        <main id="view"></main>
+      </div>
+    </div>
+    <script type="module" src="/dashboard/app.js"></script>
   </body>
 </html>

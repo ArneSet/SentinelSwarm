@@ -46,7 +46,12 @@ Documentation = "https://github.com/your-org/sentinelswarm/tree/main/docs"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sentinelswarm = ["py.typed", "api/static/*"]
+sentinelswarm = [
+    "py.typed",
+    "api/static/*",
+    "api/static/vendor/*",
+    "api/static/vendor/fonts/*",
+]
 
 # ---------------------------------------------------------------------------
 # Linting & formatting

@@ -19,7 +19,8 @@ Pump = Callable[[InMemoryBus, ManualClock, float], Awaitable[None]]
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings()
+    # Lower telemetry rate keeps virtual-time integration tests fast; logic is rate-invariant.
+    return Settings(telemetry_hz=8.0)
 
 
 @pytest.fixture

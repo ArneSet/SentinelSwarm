@@ -199,6 +199,9 @@ class FleetManager:
         latencies = [m.completed_at - m.created_at for m in completed if m.completed_at is not None]
         return {
             "fleet_size": len(drones),
+            "environment": self.settings.environment,
+            "simulated": sum(1 for d in drones if d.kind is DroneKind.SIMULATED),
+            "real": sum(1 for d in drones if d.kind is DroneKind.REAL),
             "drones_by_state": {s.value: c for s, c in counts.items() if c},
             "healthy": sum(1 for d in drones if d.health is HealthStatus.HEALTHY),
             "offline": counts[DroneState.OFFLINE],

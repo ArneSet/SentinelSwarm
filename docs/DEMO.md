@@ -29,7 +29,7 @@ What to look for in the timeline:
 This is asserted automatically in
 [tests/test_e2e_simulation.py](../tests/test_e2e_simulation.py).
 
-## Option B — live dashboard
+## Option B — live dashboard / command console
 
 ```bash
 uvicorn sentinelswarm.api.app:app --reload
@@ -38,26 +38,33 @@ uvicorn sentinelswarm.api.app:app --reload
 
 Then, interactively:
 
-1. Watch the three seeded drones launch and spread to their zones on the map.
-2. Click **fault** next to `sim-2` (or any drone) to inject a comms loss.
-3. Within a few seconds the drone turns red (`OFFLINE`), a `COMMS_LOSS` incident appears,
-   and its mission's `attempts` increments as another drone picks it up.
-4. Use **+ Add sim drone** and **+ Patrol mission** to grow the fleet and workload live.
+1. Use the large **SIM / REAL** switch in the top-left. SIM starts with the demo fleet;
+  REAL starts empty and is reserved for future hardware uplinks.
+2. Open **Tactical Map**. Mouse wheel zooms, drag pans. The map is unbounded, so coverage is
+  shown as mapped area in `m²`, not as a percentage.
+3. Open **3D Terrain**. Drag to orbit, mouse wheel to zoom, right-drag to pan. The terrain
+  is reconstructed from the active world's sensor coverage only.
+4. Use **+ Patrol** / **Scatter x5** to create more work, or **FAULT** on a unit to inject a
+  comms loss and watch reassignment.
+5. Switch to **REAL** and confirm the map is empty: SIM coverage, missions and incidents are
+  intentionally isolated from the real-hardware world.
 
 Equivalent API calls:
 
 ```bash
-curl -X POST localhost:8000/api/missions \
+curl -X POST localhost:8000/api/sim/missions \
   -H 'content-type: application/json' \
   -d '{"type":"PATROL_ZONE","x":120,"y":0,"radius":20}'
 
-curl -X POST localhost:8000/api/drones -H 'content-type: application/json' -d '{}'
+curl -X POST localhost:8000/api/sim/drones -H 'content-type: application/json' -d '{}'
 
-curl -X POST localhost:8000/api/drones/sim-2/fault \
+curl -X POST localhost:8000/api/sim/drones/sim-2/fault \
   -H 'content-type: application/json' -d '{"code":"comms_loss"}'
 
-curl localhost:8000/api/fleet
-curl localhost:8000/api/incidents
+curl localhost:8000/api/worlds
+curl localhost:8000/api/sim/fleet
+curl localhost:8000/api/real/fleet
+curl localhost:8000/api/sim/incidents
 ```
 
 ## Option C — full stack (metrics + Grafana)

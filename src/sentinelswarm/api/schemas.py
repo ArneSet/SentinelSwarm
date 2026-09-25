@@ -120,6 +120,9 @@ class IncidentResponse(BaseModel):
 
 class FleetSummary(BaseModel):
     fleet_size: int
+    environment: str
+    simulated: int
+    real: int
     drones_by_state: dict[str, int]
     healthy: int
     offline: int
@@ -129,6 +132,15 @@ class FleetSummary(BaseModel):
     avg_mission_latency_s: float | None
     battery: dict[str, float | None]
     incident_count: int
+
+
+class SystemStatus(BaseModel):
+    environment: str
+    fleet_size: int
+    simulated: int
+    real: int
+    telemetry_hz: float
+    server_time: float
 
 
 class CreateMissionRequest(BaseModel):
