@@ -14,13 +14,13 @@ simulated" to "N real + M simulated" with no control-plane changes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from ..config import Settings
 from ..domain.clock import Clock
 from ..domain.drone import DroneKind
-from ..domain.geometry import Position, Zone
+from ..domain.geometry import Position, Zone, generate_zone_exploration_waypoints
 from ..domain.states import DroneState, MissionType, can_transition
 from ..messaging.bus import MessageBus
 from ..messaging.events import (
@@ -116,6 +116,11 @@ class _ActiveMission:
     target: Position
     zone: Zone | None
     correlation_id: str | None
+    patrol_duration_s: float | None = None
+    waypoints: list[Position] = field(default_factory=list)
+    waypoint_index: int = 0
+    exploration_waypoints: list[Position] = field(default_factory=list)
+    exploration_index: int = 0
 
 
 class DroneAgent:
@@ -204,7 +209,12 @@ class DroneAgent:
                 correlation_id=cmd.correlation_id,
             )
             return
-        target = Position(cmd.target_x, cmd.target_y, cmd.target_z or self.cfg.takeoff_altitude_m)
+        waypoints = [Position(wp[0], wp[1], wp[2]) for wp in cmd.waypoints] if cmd.waypoints else []
+        target = (
+            waypoints[0]
+            if waypoints
+            else Position(cmd.target_x, cmd.target_y, cmd.target_z or self.cfg.takeoff_altitude_m)
+        )
         zone = (
             Zone(cmd.zone_id, Position(cmd.target_x, cmd.target_y, 0.0), cmd.zone_radius)
             if cmd.zone_id
@@ -216,6 +226,9 @@ class DroneAgent:
             target=target,
             zone=zone,
             correlation_id=cmd.correlation_id,
+            patrol_duration_s=cmd.patrol_duration_s,
+            waypoints=waypoints,
+            waypoint_index=0,
         )
         self._transition(DroneState.ASSIGNED)
         self._emit(
@@ -264,15 +277,70 @@ class DroneAgent:
 
         elif self.state is DroneState.TRANSIT:
             if self._reached():
+                assert self._mission is not None
+                # If following a multi-waypoint route, step through remaining waypoints
+                if self._mission.waypoints and len(self._mission.waypoints) > 1:
+                    self._mission.waypoint_index += 1
+                    if self._mission.waypoint_index < len(self._mission.waypoints):
+                        next_wp = self._mission.waypoints[self._mission.waypoint_index]
+                        self._set_target(next_wp)
+                        pct = 0.3 + 0.5 * (
+                            self._mission.waypoint_index / len(self._mission.waypoints)
+                        )
+                        self._emit_progress(pct, f"waypoint_{self._mission.waypoint_index + 1}")
+                        return
                 self._transition(DroneState.PATROLLING)
                 self._patrol_started_at = now
-                self._emit_progress(0.6, "patrolling")
+                if self._mission.zone:
+                    if self._mission.waypoints:
+                        self._mission.exploration_waypoints = list(self._mission.waypoints)
+                    else:
+                        self._mission.exploration_waypoints = generate_zone_exploration_waypoints(
+                            self._mission.zone.center,
+                            self._mission.zone.radius,
+                            altitude=self.cfg.takeoff_altitude_m,
+                        )
+                    self._mission.exploration_index = 0
+                    if self._mission.exploration_waypoints:
+                        self._set_target(self._mission.exploration_waypoints[0])
+                self._emit_progress(0.8 if self._mission.waypoints else 0.6, "patrolling")
 
         elif self.state is DroneState.PATROLLING:
             if self._patrol_started_at is None:
                 self._patrol_started_at = now
-            if now - self._patrol_started_at >= self.cfg.patrol_duration_s:
+            duration = (
+                self._mission.patrol_duration_s
+                if (self._mission and self._mission.patrol_duration_s is not None)
+                else self.cfg.patrol_duration_s
+            )
+            if now - self._patrol_started_at >= duration:
                 self._complete_mission()
+                return
+
+            assert self._mission is not None
+            # 1. Zone Loiter: actively cycle through exploration waypoints to survey the full circle
+            if self._mission.zone and self._mission.exploration_waypoints:
+                if self._reached():
+                    self._mission.exploration_index = (self._mission.exploration_index + 1) % len(
+                        self._mission.exploration_waypoints
+                    )
+                    next_point = self._mission.exploration_waypoints[
+                        self._mission.exploration_index
+                    ]
+                    self._set_target(next_point)
+
+            # 2. Waypoint Route: if circuit / loop (first point matches last point),
+            # continue flying through the circuit until duration completes
+            elif self._mission.waypoints and len(self._mission.waypoints) > 1:
+                is_circuit = (
+                    self._mission.waypoints[0].distance_to(self._mission.waypoints[-1]) <= 2.0
+                )
+                if is_circuit and self._reached():
+                    self._mission.waypoint_index = (self._mission.waypoint_index + 1) % len(
+                        self._mission.waypoints
+                    )
+                    next_wp = self._mission.waypoints[self._mission.waypoint_index]
+                    self._set_target(next_wp)
 
         elif self.state is DroneState.RETURNING:
             if self._reached():
@@ -404,11 +472,21 @@ class DroneAgent:
 
     def _emit_registration(self) -> None:
         pos = self.driver.position
+        model = getattr(self.driver, "model", "sim-scout")
+        name = getattr(self.driver, "name", None)
+        host = getattr(self.driver, "host", None)
+        port = getattr(self.driver, "port", None)
+        protocol = getattr(self.driver, "protocol", None)
         self._emit(
             uplink_event_subject(self.drone_id),
             DroneRegistered(
                 drone_id=self.drone_id,
                 kind=self.driver.kind.value,
+                model=model,
+                name=name,
+                host=host,
+                port=port,
+                protocol=protocol,
                 x=pos.x,
                 y=pos.y,
                 z=pos.z,

@@ -45,8 +45,18 @@ class SimulatedDriver:
         start: Position,
         battery_pct: float = 100.0,
         params: SimParams | None = None,
+        model: str = "sim-scout",
+        name: str | None = None,
+        host: str | None = None,
+        port: int | None = None,
+        protocol: str | None = None,
     ) -> None:
         self.drone_id = drone_id
+        self.model = model
+        self.name = name
+        self.host = host
+        self.port = port
+        self.protocol = protocol
         self._pos = start
         self._setpoint = start
         self._speed = (params or SimParams()).default_speed_mps

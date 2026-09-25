@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Drone Loop</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; }
+        canvas { display: block; }
+    </style>
+    <!-- Three.js und OrbitControls via CDN -->
+    <script src="https://cloudflare.com"></script>
+    <script src="https://jsdelivr.net"></script>
+</head>
+<body>
+    <script>
+        // 1. Setup: Szene, Kamera und Renderer
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a);
+        
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 8);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // OrbitControls für freie Rotation mit der Maus
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // 2. Lichtquellen
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(5, 10, 7);
+        scene.add(dirLight);
+
+        // 3. Drohnen-Gruppe erstellen
+        const droneGroup = new THREE.Group();
+        scene.add(droneGroup);
+
+        // Materialien
+        const bodyMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.4 });
+        const armMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.5 });
+        const propMat = new THREE.MeshStandardMaterial({ color: 0xff3333, metalness: 0.2, roughness: 0.3 });
+
+        // Center-Body
+        const bodyGeo = new THREE.BoxGeometry(1.5, 0.4, 1.5);
+        const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+        droneGroup.add(bodyMesh);
+
+        // Array für die Propeller zur späteren Animation
+        const propellers = [];
+
+        // Funktion zum Hinzufügen von Armen und Propellern
+        function createArmAndProp(xSign, zSign) {
+            // Arm (Zylinder rotiert)
+            const armGeo = new THREE.CylinderGeometry(0.08, 0.08, 2, 8);
+            const armMesh = new THREE.Mesh(armGeo, armMat);
+            armMesh.position.set(xSign * 0.7, 0, zSign * 0.7);
+            armMesh.rotation.z = Math.PI / 4 * xSign;
+            armMesh.rotation.x = Math.PI / 4 * -zSign;
+            droneGroup.add(armMesh);
+
+            // Propeller-Gruppe (Drehpunkt)
+            const propGroup = new THREE.Group();
+            propGroup.position.set(xSign * 1.4, 0.2, zSign * 1.4);
+            droneGroup.add(propGroup);
+
+            // Propeller-Blätter (Flache Box)
+            const bladeGeo = new THREE.BoxGeometry(1.2, 0.02, 0.1);
+            const bladeMesh = new THREE.Mesh(bladeGeo, propMat);
+            propGroup.add(bladeMesh);
+
+            // Propeller-Pin in der Mitte
+            const pinGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.15, 8);
+            const pinMesh = new THREE.Mesh(pinGeo, bodyMat);
+            pinMesh.position.y = 0.05;
+            propGroup.add(pinMesh);
+
+            propellers.push(propGroup);
+        }
+
+        // 4 Arme & Propeller generieren
+        createArmAndProp(1, 1);
+        createArmAndProp(1, -1);
+        createArmAndProp(-1, 1);
+        createArmAndProp(-1, -1);
+
+        // Boden-Gitter zur Orientierung
+        const grid = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+        grid.position.y = -2;
+        scene.add(grid);
+
+        // 4. Animation Loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Propeller rotieren lassen (Y-Achse)
+            propellers.forEach((prop, index) => {
+                // Wechselnde Drehrichtung für Realismus (CW / CCW)
+                const direction = (index % 2 === 0) ? 1 : -1;
+                prop.rotation.y += 0.3 * direction;
+            });
+
+            // Sanftes Schweben der gesamten Drohne
+            droneGroup.position.y = Math.sin(Date.now() * 0.003) * 0.15;
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Fenstergröße anpassen
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

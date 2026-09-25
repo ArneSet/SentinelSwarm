@@ -22,6 +22,7 @@ from ..config import Settings
 from ..domain.drone import Drone
 from ..domain.geometry import Position
 from ..domain.mission import Mission
+from ..domain.states import MissionType
 
 
 @dataclass(slots=True)
@@ -62,12 +63,31 @@ class FleetScheduler:
 
         assignments: list[Assignment] = []
         for mission in pending:
+            is_patrol = mission.type in (MissionType.PATROL_ZONE, MissionType.WAYPOINT_ROUTE)
             target = mission.target_position()
             best_id: str | None = None
             best_cost = 0.0
             best_key: tuple[float, str] | None = None
+
+            # Prioritize preferred drone if available and battery-feasible
+            if mission.preferred_drone_id and mission.preferred_drone_id in available:
+                candidate = available[mission.preferred_drone_id]
+                cost = self._estimate_cost_pct(candidate, mission)
+                if candidate.battery_pct >= cost + self.config.safety_margin_pct:
+                    assignments.append(Assignment(mission.mission_id, candidate.drone_id, cost))
+                    del available[candidate.drone_id]
+                    continue
+                if not (is_patrol and not candidate.is_scout):
+                    cost = self._estimate_cost_pct(candidate, mission)
+                    if candidate.battery_pct >= cost + self.config.safety_margin_pct:
+                        assignments.append(Assignment(mission.mission_id, candidate.drone_id, cost))
+                        del available[candidate.drone_id]
+                        continue
+
             for drone in available.values():
-                cost = self._estimate_cost_pct(drone, target)
+                if is_patrol and not drone.is_scout:
+                    continue
+                cost = self._estimate_cost_pct(drone, mission)
                 if drone.battery_pct < cost + self.config.safety_margin_pct:
                     continue  # not enough battery for a safe round trip
                 key = (drone.position.distance_to(target), drone.drone_id)
@@ -80,9 +100,29 @@ class FleetScheduler:
                 del available[best_id]
         return assignments
 
-    def _estimate_cost_pct(self, drone: Drone, target: Position) -> float:
-        """Estimated battery (percent) for drone -> target -> base."""
-
-        outbound = drone.position.distance_to(target)
-        inbound = target.distance_to(self.config.base)
-        return (outbound + inbound) * self.config.drain_per_meter_pct
+    def _estimate_cost_pct(self, drone: Drone, target_or_mission: Position | Mission) -> float:
+        """Estimated battery (percent) for drone -> target/waypoints -> base."""
+        if isinstance(target_or_mission, Mission):
+            mission = target_or_mission
+            if mission.waypoints:
+                outbound = drone.position.distance_to(mission.waypoints[0])
+                mid = sum(
+                    mission.waypoints[i].distance_to(mission.waypoints[i + 1])
+                    for i in range(len(mission.waypoints) - 1)
+                )
+                inbound = mission.waypoints[-1].distance_to(self.config.base)
+                dist_pct = (outbound + mid + inbound) * self.config.drain_per_meter_pct
+            else:
+                target = mission.target_position()
+                outbound = drone.position.distance_to(target)
+                inbound = target.distance_to(self.config.base)
+                dist_pct = (outbound + inbound) * self.config.drain_per_meter_pct
+            hover_pct = 0.0
+            if mission.patrol_duration_s:
+                hover_pct = mission.patrol_duration_s * 0.01  # approx 0.01% / s
+            return dist_pct + hover_pct
+        else:
+            target = target_or_mission
+            outbound = drone.position.distance_to(target)
+            inbound = target.distance_to(self.config.base)
+            return (outbound + inbound) * self.config.drain_per_meter_pct

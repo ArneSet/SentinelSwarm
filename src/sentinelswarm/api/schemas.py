@@ -7,6 +7,8 @@ never leaked directly over the wire.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ..domain.drone import Drone
@@ -22,6 +24,11 @@ class HealthResponse(BaseModel):
 class DroneView(BaseModel):
     drone_id: str
     kind: str
+    model: str = "sim-scout"
+    name: str | None = None
+    host: str | None = None
+    port: int | None = None
+    protocol: str | None = None
     state: str
     x: float
     y: float
@@ -37,6 +44,11 @@ class DroneView(BaseModel):
         return cls(
             drone_id=drone.drone_id,
             kind=drone.kind.value,
+            model=drone.model,
+            name=drone.name,
+            host=drone.host,
+            port=drone.port,
+            protocol=drone.protocol,
             state=drone.state.value,
             x=drone.position.x,
             y=drone.position.y,
@@ -68,10 +80,16 @@ class MissionView(BaseModel):
     max_retries: int
     last_error: str | None
     correlation_id: str
+    patrol_duration_s: float | None = None
+    waypoints: list[list[float]] = Field(default_factory=list)
 
     @classmethod
     def from_domain(cls, mission: Mission) -> MissionView:
-        target = mission.location or (mission.zone.center if mission.zone else None)
+        target = (
+            mission.location
+            or (mission.waypoints[0] if mission.waypoints else None)
+            or (mission.zone.center if mission.zone else None)
+        )
         return cls(
             mission_id=mission.mission_id,
             type=mission.type.value,
@@ -91,6 +109,8 @@ class MissionView(BaseModel):
             max_retries=mission.retry.max_retries,
             last_error=mission.last_error,
             correlation_id=mission.correlation_id,
+            patrol_duration_s=mission.patrol_duration_s,
+            waypoints=[[wp.x, wp.y, wp.z] for wp in mission.waypoints],
         )
 
 
@@ -144,19 +164,32 @@ class SystemStatus(BaseModel):
 
 
 class CreateMissionRequest(BaseModel):
-    type: str = Field(description="PATROL_ZONE | INSPECT_LOCATION | RETURN_TO_BASE | ...")
-    x: float = Field(description="Target/zone-center X in metres (ENU).")
-    y: float = Field(description="Target/zone-center Y in metres (ENU).")
+    type: str = Field(description="PATROL_ZONE | INSPECT_LOCATION | WAYPOINT_ROUTE | ...")
+    x: float | None = Field(default=None, description="Target/zone-center X in metres (ENU).")
+    y: float | None = Field(default=None, description="Target/zone-center Y in metres (ENU).")
     z: float = Field(default=15.0, description="Target altitude in metres.")
     radius: float = Field(default=20.0, ge=0, description="Zone radius (PATROL_ZONE only).")
     zone_id: str | None = None
     priority: int = Field(default=20, ge=0, le=100)
     timeout_s: float | None = Field(default=None, gt=0)
     max_retries: int | None = Field(default=None, ge=0)
+    patrol_duration_s: float | None = Field(default=None, ge=0)
+    waypoints: list[list[float]] = Field(default_factory=list)
+    target_drone_id: str | None = None
+    target_drone_ids: list[str] | None = None
+    swarm_count: int | None = None
 
 
 class AddDroneRequest(BaseModel):
+    """Request to register a new drone unit in a world."""
+
     drone_id: str | None = None
+    unit_type: Literal["simulated", "esp32", "px4_ros2", "custom"] = "simulated"
+    name: str | None = None
+    model: str | None = None
+    host: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
+    protocol: Literal["mqtt", "serial", "udp", "tcp"] | None = None
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0

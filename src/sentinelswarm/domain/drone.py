@@ -44,6 +44,11 @@ class Drone:
 
     drone_id: str
     kind: DroneKind = DroneKind.SIMULATED
+    model: str = "sim-scout"
+    name: str | None = None
+    host: str | None = None
+    port: int | None = None
+    protocol: str | None = None
     state: DroneState = DroneState.OFFLINE
     position: Position = field(default_factory=lambda: Position(0.0, 0.0, 0.0))
     home: Position = field(default_factory=lambda: Position(0.0, 0.0, 0.0))
@@ -82,6 +87,15 @@ class Drone:
         return now - self.last_heartbeat_at
 
     # -- queries ---------------------------------------------------------
+    @property
+    def is_scout(self) -> bool:
+        """True if this drone is a scout-class reconnaissance unit."""
+        m = (self.model or "").lower()
+        d_id = (self.drone_id or "").lower()
+        if any(bad in m or bad in d_id for bad in ("heavy", "cargo", "transport")):
+            return False
+        return any(good in m for good in ("scout", "mini", "nano", "racer")) or "scout" in d_id
+
     def is_available(self, min_battery_pct: float) -> bool:
         """True if the drone can be assigned a new mission right now."""
 

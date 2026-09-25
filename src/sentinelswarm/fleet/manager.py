@@ -129,6 +129,9 @@ class FleetManager:
         *,
         zone: Zone | None = None,
         location: Position | None = None,
+        waypoints: list[Position] | None = None,
+        patrol_duration_s: float | None = None,
+        preferred_drone_id: str | None = None,
         priority: int = MissionPriority.NORMAL.value,
         timeout_s: float | None = None,
         max_retries: int | None = None,
@@ -140,6 +143,9 @@ class FleetManager:
             priority=priority,
             zone=zone,
             location=location,
+            waypoints=waypoints or [],
+            patrol_duration_s=patrol_duration_s,
+            preferred_drone_id=preferred_drone_id,
             status=MissionStatus.PENDING,
             created_at=now,
             timeout_s=timeout_s
@@ -249,6 +255,11 @@ class FleetManager:
             drone = Drone(
                 drone_id=event.drone_id,
                 kind=DroneKind(event.kind),
+                model=event.model,
+                name=event.name,
+                host=event.host,
+                port=event.port,
+                protocol=event.protocol,
                 state=DroneState.IDLE,
                 position=Position(event.x, event.y, event.z),
                 home=self.base,
@@ -263,6 +274,16 @@ class FleetManager:
             logger.info(
                 "drone registered", extra={"drone_id": drone.drone_id, "kind": drone.kind.value}
             )
+        else:
+            drone.model = event.model
+            if event.name is not None:
+                drone.name = event.name
+            if event.host is not None:
+                drone.host = event.host
+            if event.port is not None:
+                drone.port = event.port
+            if event.protocol is not None:
+                drone.protocol = event.protocol
 
     def _on_telemetry(self, event: Telemetry, now: float) -> None:
         drone = self._ensure_drone(event.drone_id, event.battery_pct, now)
@@ -447,6 +468,8 @@ class FleetManager:
                 target_z=target.z,
                 zone_id=mission.zone.zone_id if mission.zone else None,
                 zone_radius=mission.zone.radius if mission.zone else 0.0,
+                patrol_duration_s=mission.patrol_duration_s,
+                waypoints=[wp.as_tuple() for wp in mission.waypoints],
             ),
             correlation_id=mission.correlation_id,
         )

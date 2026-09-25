@@ -15,34 +15,42 @@ Current implementation:
 - failure detection, incidents and mission reassignment;
 - 30 Hz telemetry stream;
 - separate SIM and REAL worlds;
-- buildless premium dashboard with 2D/3D maps.
+- tactical patrol planning with interactive Zone Loiter (`DRAW_ZONE`) and Multi-Point Waypoints (`WAYPOINT_ROUTE`);
+- mathematical Safe-RTB duration budgeting model;
+- unit registration and decommissioning;
+- coverage/terrain reset capabilities;
+- buildless premium dashboard with 2D/3D maps and Tactical Metal theme.
 
 Start with [README.md](../README.md) for the project overview.
 
 ## Key docs to read first
 
-1. [HANDOVER.md](HANDOVER.md)
+1. [WORK_REPORT_PATROL_UPGRADE.md](WORK_REPORT_PATROL_UPGRADE.md)
+   Complete technical work report of the advanced patrol planning, multi-point waypoint engine,
+   Safe-RTB calculation, terrain reset, and unit decommissioning sprint.
+
+2. [HANDOVER.md](HANDOVER.md)
    Current implementation state, validated commands, file map, API quick reference and next
    recommended work. This is the most important file for continuing in Antigravity.
 
-2. [ARCHITECTURE.md](ARCHITECTURE.md)
+3. [ARCHITECTURE.md](ARCHITECTURE.md)
    Control-plane architecture, SIM/REAL separation, component responsibilities, event model
    and API model.
 
-3. [FLEET_STATE_MACHINE.md](FLEET_STATE_MACHINE.md)
+4. [FLEET_STATE_MACHINE.md](FLEET_STATE_MACHINE.md)
    Valid drone states and legal transitions. Keep this deterministic; learned policies should
    plug in later around the scheduler, not replace the safety state machine.
 
-4. [FAILURE_HANDLING.md](FAILURE_HANDLING.md)
+5. [FAILURE_HANDLING.md](FAILURE_HANDLING.md)
    How comms loss, faults, low battery, mission timeout and reassignment work.
 
-5. [NETWORKING.md](NETWORKING.md)
+6. [NETWORKING.md](NETWORKING.md)
    Heartbeats, timeouts, retries, idempotency, duplicate events and message ordering.
 
-6. [OBSERVABILITY.md](OBSERVABILITY.md)
+7. [OBSERVABILITY.md](OBSERVABILITY.md)
    Metrics, logging, correlation ids and dashboard telemetry model.
 
-7. [DEMO.md](DEMO.md)
+8. [DEMO.md](DEMO.md)
    How to run the CLI demo, dashboard, API calls and Docker stack.
 
 ## Important files
@@ -97,9 +105,16 @@ Last known good before this summary:
 ## Current dashboard behavior
 
 - Big top-left SIM / REAL switch changes the entire world context.
-- SIM starts with simulated drones.
+- SIM starts with simulated drones (supports Scout and Heavy Lifter models).
 - REAL starts empty and must remain isolated from SIM data.
 - Tactical Map is pan/zoom capable and unbounded.
+- Interactive Tactical Patrol Planning:
+  - Exclusively Scout-class drones (`sim-scout`, `esp32-s3-mini`, `px4-mini-racer`, etc.) are permitted for patrol missions.
+  - **Zone Loiter:** Drag-to-draw radius on tactical map; autonomous active exploration covers the full circular zone with 8-point perimeter survey ($r = 0.72 R$) and 4-point inner cross pattern ($r = 0.35 R$).
+  - **Multi-Point Route & Rundflug (Circuit):** Interactive waypoints ($A \to B \to C$) with automatic closed-loop toggle (click near point A or HUD button `[☍ CLOSE LOOP]`). The flight agent loops the closed circuit continuously for the mission duration.
+  - **Safe-RTB Duration Dialog:** Real-time calculation of transit drain, safety reserve (15% crit + 10% safety margin), and maximum safe on-station patrol duration.
+- Database / Terrain Reset button on Tactical Map and 3D Terrain (`/api/{world}/terrain/reset`).
+- Unit Decommissioning (`REMOVE`) with confirmation modal (`DELETE /api/{world}/drones/{id}`).
 - Coverage is measured as mapped area in `m²`, not percent.
 - 3D Terrain uses Three.js OrbitControls:
   - drag = orbit;
