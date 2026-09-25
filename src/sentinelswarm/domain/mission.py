@@ -56,6 +56,9 @@ class Mission:
     priority: int = MissionPriority.NORMAL.value
     zone: Zone | None = None
     location: Position | None = None
+    waypoints: list[Position] = field(default_factory=list)
+    patrol_duration_s: float | None = None
+    preferred_drone_id: str | None = None
     status: MissionStatus = MissionStatus.PENDING
     assigned_drone: str | None = None
     created_at: float = 0.0
@@ -81,9 +84,11 @@ class Mission:
 
         if self.location is not None:
             return self.location
+        if self.waypoints:
+            return self.waypoints[0]
         if self.zone is not None:
             return self.zone.center
-        raise ValueError(f"Mission {self.mission_id} has neither zone nor location")
+        raise ValueError(f"Mission {self.mission_id} has neither zone nor location nor waypoints")
 
     def can_reassign(self) -> bool:
         """True if the mission may be handed to another drone after a failure."""

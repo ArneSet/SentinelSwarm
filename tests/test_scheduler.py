@@ -95,3 +95,17 @@ def test_no_double_assignment_of_one_drone() -> None:
     plan = sched.plan([m1, m2], [only], now=0.0)
     assigned_drones = [a.drone_id for a in plan]
     assert assigned_drones == ["only"]
+
+
+def test_patrol_mission_requires_scout_drone() -> None:
+    sched = FleetScheduler(_config())
+    heavy = _drone("heavy-1", 10, 0)
+    heavy.model = "sim-heavy"
+    scout = _drone("scout-1", 50, 0)
+    scout.model = "sim-scout"
+
+    mission = _patrol("m-patrol", 100, 0, MissionPriority.NORMAL.value)
+    # Heavy is closer, but should be skipped because patrol missions require scout drones
+    plan = sched.plan([mission], [heavy, scout], now=0.0)
+    assert len(plan) == 1
+    assert plan[0].drone_id == "scout-1"

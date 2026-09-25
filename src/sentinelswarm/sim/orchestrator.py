@@ -95,18 +95,37 @@ class FleetOrchestrator:
         self,
         drone_id: str | None = None,
         *,
+        name: str | None = None,
         start: Position | None = None,
         battery_pct: float = 100.0,
+        model: str = "sim-scout",
+        host: str | None = None,
+        port: int | None = None,
+        protocol: str | None = None,
     ) -> str:
         self._sim_counter += 1
         drone_id = drone_id or f"sim-{self._sim_counter}"
         driver = SimulatedDriver(
             drone_id=drone_id,
+            name=name,
             start=start or self.base,
             battery_pct=battery_pct,
             params=SimParams.from_settings(self.settings),
+            model=model,
+            host=host,
+            port=port,
+            protocol=protocol,
         )
-        return self.add_drone(driver)
+        out_id = self.add_drone(driver)
+        # Pre-seed or ensure state has model and metadata immediately
+        d = self.manager.state.get_drone(out_id)
+        if d is not None:
+            d.model = model
+            d.name = name
+            d.host = host
+            d.port = port
+            d.protocol = protocol
+        return out_id
 
     def remove_drone(self, drone_id: str) -> bool:
         handle = self._agents.pop(drone_id, None)

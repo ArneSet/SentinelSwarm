@@ -50,8 +50,9 @@ From the repository root:
 Last validated in this session:
 
 - `ruff check .` -> passed
+- `ruff format --check .` -> passed
 - `mypy` -> passed (`34 source files`)
-- `pytest -q` -> exit code `0` (`54 tests`)
+- `pytest -q` -> exit code `0` (`57 tests`)
 
 PowerShell sometimes suppresses the final pytest summary line in pipelines; trust `$LASTEXITCODE`.
 
@@ -63,10 +64,13 @@ GET  /api/worlds
 GET  /api/sim/fleet
 GET  /api/real/fleet
 GET  /api/sim/drones
-POST /api/sim/drones
+POST /api/sim/drones               # Unit registration (SIM: simulated, REAL: hardware)
+DELETE /api/sim/drones/{drone_id}  # Decommission & remove drone unit
 POST /api/sim/drones/{drone_id}/fault
 GET  /api/sim/missions
-POST /api/sim/missions
+POST /api/sim/missions             # PATROL_ZONE, WAYPOINT_ROUTE, INSPECT_LOCATION
+POST /api/sim/missions/{id}/cancel
+POST /api/sim/coverage/reset       # Purge mapped terrain/coverage raster
 GET  /api/sim/incidents
 WS   /ws/sim
 WS   /ws/real

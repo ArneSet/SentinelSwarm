@@ -115,3 +115,98 @@ def test_metrics_endpoint_exposes_prometheus(api_client: TestClient) -> None:
     resp = api_client.get("/metrics")
     assert resp.status_code == 200
     assert "sentinel_fleet_size" in resp.text
+
+
+def test_create_waypoint_route_mission(api_client: TestClient) -> None:
+    resp = api_client.post(
+        "/api/sim/missions",
+        json={
+            "type": "WAYPOINT_ROUTE",
+            "waypoints": [[10.0, 20.0, 15.0], [30.0, 40.0, 15.0], [50.0, 20.0, 15.0]],
+            "patrol_duration_s": 25.0,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["type"] == "WAYPOINT_ROUTE"
+    assert len(data["waypoints"]) == 3
+    assert data["patrol_duration_s"] == 25.0
+
+
+def test_coverage_reset_endpoint(api_client: TestClient) -> None:
+    resp = api_client.post("/api/sim/coverage/reset")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+
+def test_delete_drone_endpoint(api_client: TestClient) -> None:
+    api_client.post("/api/sim/drones", json={"drone_id": "to-delete"})
+    del_resp = api_client.delete("/api/sim/drones/to-delete")
+    assert del_resp.status_code == 200
+    assert del_resp.json()["ok"] is True
+    assert api_client.get("/api/sim/drones/to-delete").status_code == 404
+
+
+def test_patrol_mission_rejects_non_scout_target(api_client: TestClient) -> None:
+    # Register a heavy drone
+    api_client.post("/api/sim/drones", json={"drone_id": "heavy-lifter", "model": "sim-heavy"})
+    resp = api_client.post(
+        "/api/sim/missions",
+        json={
+            "type": "PATROL_ZONE",
+            "x": 30.0,
+            "y": 30.0,
+            "target_drone_id": "heavy-lifter",
+        },
+    )
+    assert resp.status_code == 422
+    assert "not a Scout drone" in resp.json()["detail"]
+
+
+def test_patrol_mission_accepts_scout_target(api_client: TestClient) -> None:
+    # Register a scout drone
+    api_client.post("/api/sim/drones", json={"drone_id": "scout-unit", "model": "sim-scout"})
+    resp = api_client.post(
+        "/api/sim/missions",
+        json={
+            "type": "PATROL_ZONE",
+            "x": 40.0,
+            "y": 40.0,
+            "target_drone_id": "scout-unit",
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["type"] == "PATROL_ZONE"
+
+
+def test_add_named_scout_drone_and_snapshot_serialization(api_client: TestClient) -> None:
+    resp = api_client.post(
+        "/api/sim/drones",
+        json={
+            "drone_id": "Nadia",
+            "name": "Nadia Scout",
+            "model": "sim-scout",
+            "unit_type": "simulated",
+            "battery_pct": 99.8,
+        },
+    )
+    assert resp.status_code == 201
+
+    get_resp = api_client.get("/api/sim/drones/Nadia")
+    assert get_resp.status_code == 200
+    d_data = get_resp.json()
+    assert d_data["drone_id"] == "Nadia"
+    assert d_data["name"] == "Nadia Scout"
+    assert d_data["model"] == "sim-scout"
+
+    pz_resp = api_client.post(
+        "/api/sim/missions",
+        json={
+            "type": "PATROL_ZONE",
+            "x": 20.0,
+            "y": 20.0,
+            "target_drone_id": "Nadia",
+        },
+    )
+    assert pz_resp.status_code == 201
+    assert pz_resp.json()["type"] == "PATROL_ZONE"

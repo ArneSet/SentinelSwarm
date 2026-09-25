@@ -7,7 +7,8 @@ in deterministic virtual time.
 from __future__ import annotations
 
 from sentinelswarm.agents.base import COMMS_LOSS
-from sentinelswarm.domain.states import DroneState, MissionStatus
+from sentinelswarm.domain.geometry import Position, Zone
+from sentinelswarm.domain.states import DroneState, MissionStatus, MissionType
 from sentinelswarm.fleet.incidents import IncidentCategory
 from sentinelswarm.sim.orchestrator import FleetOrchestrator
 from sentinelswarm.sim.scenario import build_demo_scenario
@@ -58,3 +59,55 @@ async def test_end_to_end_patrol_with_failure_and_recovery(
     assert summary["mission_success_rate"] == 1.0
     assert summary["fleet_size"] == 3
     assert scenario.drone_ids == ["sim-1", "sim-2", "sim-3"]
+
+
+async def test_circuit_patrol_continuous_looping(orchestrator: FleetOrchestrator) -> None:
+    drone_id = orchestrator.add_simulated_drone("scout-circuit", start=Position(0, 0, 0))
+    # Closed loop route: A -> B -> C -> A
+    waypoints = [
+        Position(20.0, 0.0, 15.0),
+        Position(20.0, 20.0, 15.0),
+        Position(0.0, 20.0, 15.0),
+        Position(20.0, 0.0, 15.0),
+    ]
+    mission = orchestrator.manager.create_mission(
+        MissionType.WAYPOINT_ROUTE,
+        waypoints=waypoints,
+        preferred_drone_id=drone_id,
+        patrol_duration_s=20.0,
+    )
+    # Advance time through takeoff and circuit traversal
+    await orchestrator.advance(10.0)
+    agent = orchestrator._agents[drone_id].agent
+    assert agent.state in (DroneState.TRANSIT, DroneState.PATROLLING)
+
+    # Advance until mission completes and drone returns
+    await orchestrator.advance(40.0)
+    st_mission = orchestrator.manager.state.get_mission(mission.mission_id)
+    assert st_mission is not None
+    assert st_mission.status is MissionStatus.COMPLETED
+
+
+async def test_zone_patrol_active_exploration(orchestrator: FleetOrchestrator) -> None:
+    drone_id = orchestrator.add_simulated_drone("scout-explorer", start=Position(0, 0, 0))
+    zone = Zone(zone_id="explore-zone", center=Position(80.0, 80.0, 0.0), radius=35.0)
+    mission = orchestrator.manager.create_mission(
+        MissionType.PATROL_ZONE,
+        zone=zone,
+        preferred_drone_id=drone_id,
+        patrol_duration_s=25.0,
+    )
+    assert mission.mission_id is not None
+    # Transit to zone
+    await orchestrator.advance(15.0)
+    agent = orchestrator._agents[drone_id].agent
+    assert agent.state is DroneState.PATROLLING
+    assert agent._mission is not None
+    assert len(agent._mission.exploration_waypoints) > 0
+
+    # Advance time: verify the drone visits different positions inside the zone
+    pos_before = Position(agent.driver.position.x, agent.driver.position.y, agent.driver.position.z)
+    await orchestrator.advance(6.0)
+    pos_after = Position(agent.driver.position.x, agent.driver.position.y, agent.driver.position.z)
+    # The drone must have actively moved and explored, not remained static!
+    assert pos_before.distance_to(pos_after) > 10.0

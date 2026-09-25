@@ -70,3 +70,19 @@ def test_terminal_status_blocks_reassignment() -> None:
     mission.mark_completed(now=5.0)
     assert mission.is_terminal
     assert not mission.can_reassign()
+
+
+def test_generate_zone_exploration_waypoints() -> None:
+    from sentinelswarm.agents.base import generate_zone_exploration_waypoints
+
+    center = Position(100.0, 50.0, 0.0)
+    radius = 40.0
+    pts = generate_zone_exploration_waypoints(center, radius, altitude=15.0)
+    assert len(pts) == 12  # 8 perimeter + 4 interior cross-sweeps
+    assert all(p.z == 15.0 for p in pts)
+    # All points are strictly inside or at zone radius
+    assert all(center.distance_to(Position(p.x, p.y, 0.0)) <= radius + 0.1 for p in pts)
+    # Both outer perimeter and inner survey points exist
+    distances = [center.distance_to(Position(p.x, p.y, 0.0)) for p in pts]
+    assert any(d > 25.0 for d in distances)
+    assert any(d < 18.0 for d in distances)

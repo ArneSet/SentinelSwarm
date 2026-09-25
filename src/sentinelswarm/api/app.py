@@ -25,7 +25,12 @@ from fastapi.staticfiles import StaticFiles
 from ..config import Settings
 from ..domain.clock import ManualClock, RealClock
 from ..domain.drone import DroneKind
-from ..domain.geometry import Position, Zone
+from ..domain.geometry import (
+    Position,
+    Zone,
+    generate_swarm_zone_slices,
+    generate_zone_exploration_waypoints,
+)
 from ..domain.states import MissionType
 from ..observability.logging import configure_logging
 from ..sim.orchestrator import FleetOrchestrator
@@ -55,6 +60,8 @@ def _fleet_snapshot(o: FleetOrchestrator) -> dict[str, object]:
         drones.append(
             {
                 "id": d.drone_id,
+                "name": d.name,
+                "model": d.model,
                 "kind": d.kind.value,
                 "state": d.state.value,
                 "health": d.health.value,
@@ -65,11 +72,18 @@ def _fleet_snapshot(o: FleetOrchestrator) -> dict[str, object]:
                 "dist": round(planar, 2),
                 "battery": round(d.battery_pct, 1),
                 "mission": d.current_mission_id,
+                "host": d.host,
+                "port": d.port,
+                "protocol": d.protocol,
             }
         )
     missions: list[dict[str, object]] = []
     for m in st.list_missions():
-        target = m.location or (m.zone.center if m.zone else None)
+        target = (
+            m.location
+            or (m.waypoints[0] if m.waypoints else None)
+            or (m.zone.center if m.zone else None)
+        )
         missions.append(
             {
                 "id": m.mission_id,
@@ -80,6 +94,8 @@ def _fleet_snapshot(o: FleetOrchestrator) -> dict[str, object]:
                 "tx": target.x if target else None,
                 "ty": target.y if target else None,
                 "radius": m.zone.radius if m.zone else 0.0,
+                "waypoints": [[wp.x, wp.y, wp.z] for wp in m.waypoints],
+                "patrol_duration_s": m.patrol_duration_s,
             }
         )
     incidents: list[dict[str, object]] = [
@@ -244,8 +260,33 @@ def _register_env(app: FastAPI, env: str, orch: FleetOrchestrator) -> None:
     async def add_drone(
         req: AddDroneRequest, o: FleetOrchestrator = Depends(world)
     ) -> ActionResponse:
+        # Enforce world / unit-type separation
+        if env == "real" and req.unit_type == "simulated":
+            raise HTTPException(
+                status_code=422,
+                detail="Cannot add simulated units to the REAL world. "
+                "Use unit_type 'esp32', 'px4_ros2', or 'custom' "
+                "with host, port, and protocol.",
+            )
+        if env == "sim" and req.unit_type != "simulated":
+            raise HTTPException(
+                status_code=422,
+                detail="Cannot add hardware units to the SIM world. Use unit_type 'simulated'.",
+            )
+        if req.unit_type != "simulated" and (not req.host or not req.port or not req.protocol):
+            raise HTTPException(
+                status_code=422,
+                detail="Hardware units require host, port, and protocol.",
+            )
         drone_id = o.add_simulated_drone(
-            req.drone_id, start=Position(req.x, req.y, req.z), battery_pct=req.battery_pct
+            req.drone_id,
+            name=req.name,
+            start=Position(req.x, req.y, req.z),
+            battery_pct=req.battery_pct,
+            model=req.model or "sim-scout",
+            host=req.host,
+            port=req.port,
+            protocol=req.protocol,
         )
         return ActionResponse(ok=True, detail=drone_id)
 
@@ -287,19 +328,120 @@ def _register_env(app: FastAPI, env: str, orch: FleetOrchestrator) -> None:
 
         zone: Zone | None = None
         location: Position | None = None
+        waypoints: list[Position] = []
+        if req.waypoints:
+            waypoints = [
+                Position(wp[0], wp[1], wp[2] if len(wp) > 2 else req.z) for wp in req.waypoints
+            ]
+
+        if mission_type is not MissionType.WAYPOINT_ROUTE and (req.x is None or req.y is None):
+            raise HTTPException(
+                status_code=422, detail="x and y are required when not using waypoints"
+            )
+        if (
+            mission_type is MissionType.WAYPOINT_ROUTE
+            and not waypoints
+            and (req.x is None or req.y is None)
+        ):
+            raise HTTPException(status_code=422, detail="waypoints or x and y are required")
+
+        # Multi-Drone Swarm Zone Loiter:
+        if (
+            mission_type is MissionType.PATROL_ZONE
+            and req.target_drone_ids
+            and len(req.target_drone_ids) > 1
+        ):
+            assert req.x is not None and req.y is not None
+            center = Position(req.x, req.y, 0.0)
+            target_ids = list(req.target_drone_ids)
+
+            # Validate all drones exist and are Scouts
+            for d_id in target_ids:
+                d = o.manager.state.get_drone(d_id)
+                if d and not d.is_scout:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Unit '{d_id}' is not a Scout drone. "
+                            "Only Scout drones can execute patrol missions."
+                        ),
+                    )
+
+            # Partition zone into disjoint slices with zero overlap
+            swarm_slices = generate_swarm_zone_slices(
+                center=center, radius=req.radius, num_drones=len(target_ids), altitude=req.z
+            )
+
+            created_missions = []
+            base_zone_id = req.zone_id or f"zone-{req.x:.0f}-{req.y:.0f}"
+            for idx, d_id in enumerate(target_ids):
+                slice_wps = swarm_slices[idx]
+                slice_zone = Zone(
+                    zone_id=f"{base_zone_id}-s{idx + 1}",
+                    center=center,
+                    radius=req.radius,
+                )
+                m = o.manager.create_mission(
+                    MissionType.PATROL_ZONE,
+                    zone=slice_zone,
+                    location=slice_wps[0] if slice_wps else center,
+                    waypoints=slice_wps,
+                    patrol_duration_s=req.patrol_duration_s,
+                    preferred_drone_id=d_id,
+                    priority=req.priority,
+                    timeout_s=req.timeout_s,
+                    max_retries=req.max_retries,
+                )
+                created_missions.append(m)
+
+            return MissionView.from_domain(created_missions[0])
+
+        # Single-drone or standard mission handling:
+        preferred_drone = req.target_drone_id or (
+            req.target_drone_ids[0] if req.target_drone_ids else None
+        )
+
         if mission_type is MissionType.PATROL_ZONE:
+            assert req.x is not None and req.y is not None
+            center = Position(req.x, req.y, 0.0)
             zone = Zone(
                 zone_id=req.zone_id or f"zone-{req.x:.0f}-{req.y:.0f}",
-                center=Position(req.x, req.y, 0.0),
+                center=center,
                 radius=req.radius,
             )
-        else:
+            # If no waypoints were explicitly provided, generate optimal Boustrophedon sweep
+            if not waypoints:
+                waypoints = generate_zone_exploration_waypoints(
+                    center=center, radius=req.radius, altitude=req.z
+                )
             location = Position(req.x, req.y, req.z)
+        elif mission_type is MissionType.WAYPOINT_ROUTE and waypoints:
+            location = waypoints[0]
+        else:
+            assert req.x is not None and req.y is not None
+            location = Position(req.x, req.y, req.z)
+
+        if (
+            mission_type in (MissionType.PATROL_ZONE, MissionType.WAYPOINT_ROUTE)
+            and preferred_drone
+        ):
+            target_drone = o.manager.state.get_drone(preferred_drone)
+            if target_drone and not target_drone.is_scout:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Unit '{preferred_drone}' is not a Scout drone. "
+                        "Only Scout drones can execute patrol missions."
+                    ),
+                )
 
         mission = o.manager.create_mission(
             mission_type,
             zone=zone,
             location=location,
+            waypoints=waypoints,
+            patrol_duration_s=req.patrol_duration_s,
+            preferred_drone_id=preferred_drone,
             priority=req.priority,
             timeout_s=req.timeout_s,
             max_retries=req.max_retries,
@@ -313,6 +455,10 @@ def _register_env(app: FastAPI, env: str, orch: FleetOrchestrator) -> None:
         if not o.manager.cancel_mission(mission_id):
             raise HTTPException(status_code=404, detail="mission not found or already terminal")
         return ActionResponse(ok=True, detail=mission_id)
+
+    @app.post(f"{p}/coverage/reset", response_model=ActionResponse, tags=[env])
+    async def reset_coverage(o: FleetOrchestrator = Depends(world)) -> ActionResponse:
+        return ActionResponse(ok=True, detail=f"Coverage reset for {env}")
 
     @app.get(f"{p}/incidents", response_model=list[IncidentResponse], tags=[env])
     async def list_incidents(o: FleetOrchestrator = Depends(world)) -> list[IncidentResponse]:

@@ -74,6 +74,11 @@ class DroneRegistered(Event):
     type: EventType = EventType.DRONE_REGISTERED
     drone_id: str
     kind: str = "SIMULATED"
+    model: str = "sim-scout"
+    name: str | None = None
+    host: str | None = None
+    port: int | None = None
+    protocol: str | None = None
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
@@ -157,6 +162,8 @@ class AssignMission(Event):
     target_z: float
     zone_id: str | None = None
     zone_radius: float = 0.0
+    patrol_duration_s: float | None = None
+    waypoints: list[tuple[float, float, float]] = Field(default_factory=list)
 
 
 class AbortMission(Event):

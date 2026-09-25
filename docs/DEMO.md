@@ -44,9 +44,16 @@ Then, interactively:
   shown as mapped area in `m²`, not as a percentage.
 3. Open **3D Terrain**. Drag to orbit, mouse wheel to zoom, right-drag to pan. The terrain
   is reconstructed from the active world's sensor coverage only.
-4. Use **+ Patrol** / **Scatter x5** to create more work, or **FAULT** on a unit to inject a
-  comms loss and watch reassignment.
-5. Switch to **REAL** and confirm the map is empty: SIM coverage, missions and incidents are
+4. Click **+ PATROL** to open the **Tactical Patrol Planning** modal:
+   - Choose a target drone or keep *Auto-Assign*.
+   - Choose **Zone Loiter** to drag and draw a patrol radius on the tactical map.
+   - Choose **Multi-Point** to click multiple sequential waypoints ($A \to B \to C$).
+   - Review the **Safe-RTB Duration Budget** and click **MAX TIME (Safe RTB)** to automatically
+     budget on-station loiter time while guaranteeing sufficient battery for return to base.
+5. Click **RESET TERRAIN** on the Tactical Map or 3D Terrain view to purge coverage raster data.
+6. Open **Units** under Fleet to inspect units, or click **REMOVE** / **DECOMMISSION** to safely
+   deregister a unit from the fleet.
+7. Switch to **REAL** and confirm the map is empty: SIM coverage, missions and incidents are
   intentionally isolated from the real-hardware world.
 
 Equivalent API calls:
