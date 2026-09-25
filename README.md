@@ -386,6 +386,7 @@ deploy/           prometheus + grafana provisioning
 - [docs/NETWORKING.md](docs/NETWORKING.md) — heartbeats, retries, idempotency, ordering
 - [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — logs, metrics, traces
 - [docs/DEMO.md](docs/DEMO.md) — running the demo & what to look for
+- [docs/ANTIGRAVITY_SUMMARY.md](docs/ANTIGRAVITY_SUMMARY.md) — short continuation summary for Antigravity
 - [docs/HANDOVER.md](docs/HANDOVER.md) — current state and next steps for continuing in another tool
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup & conventions
 
