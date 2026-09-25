@@ -1,0 +1,104 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinelswarm"
+version = "0.1.0"
+description = "Simulation-first autonomous drone fleet-management control plane (non-weaponized)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "SentinelSwarm Contributors" }]
+keywords = ["robotics", "fleet-management", "drones", "ros2", "distributed-systems"]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "prometheus-client>=0.20",
+]
+
+[project.optional-dependencies]
+vision = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "numpy>=1.26",
+]
+
+[project.scripts]
+sentinelswarm-sim = "sentinelswarm.sim.runner:main"
+
+[project.urls]
+Homepage = "https://github.com/your-org/sentinelswarm"
+Documentation = "https://github.com/your-org/sentinelswarm/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sentinelswarm = ["py.typed", "api/static/*"]
+
+# ---------------------------------------------------------------------------
+# Linting & formatting
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["build", "dist", "*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+    "RUF", # ruff-specific
+]
+ignore = [
+    "B008",   # function calls in argument defaults (FastAPI Depends pattern)
+    "UP042",  # keep explicit `str, Enum` mixin (clear, pydantic-friendly)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sentinelswarm"]
+
+# ---------------------------------------------------------------------------
+# Type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+packages = ["sentinelswarm"]
+mypy_path = "src"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["cv2.*", "prometheus_client.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra -q"
+filterwarnings = ["ignore::DeprecationWarning"]
